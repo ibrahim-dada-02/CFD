@@ -13,9 +13,8 @@ class Scratch:
         self.Ly = 1.0  # Height of domain (meters)
         
         # Create spatial grid
-        # FIX 1: Should go from 0 to Lx/Ly, not 0 to nx/ny!
-        self.x = np.linspace(0, self.Lx, nx)  # ✓ Fixed
-        self.y = np.linspace(0, self.Ly, ny)  # ✓ Fixed
+        self.x = np.linspace(0, self.Lx, nx) 
+        self.y = np.linspace(0, self.Ly, ny) 
         self.X, self.Y = np.meshgrid(self.x, self.y)
         
         # Initialize potential field
@@ -30,7 +29,6 @@ class Scratch:
         self.mask[:self.step_y, :self.step_x] = False
         
     def initialise_fields(self, u_inlet=1.0):
-        """Initialize the potential field with uniform flow guess"""
         self.u_inlet = u_inlet
         
         # Initialize with linear potential (good initial guess)
@@ -40,8 +38,6 @@ class Scratch:
                     self.phi[i, j] = u_inlet * self.x[j]
     
     def set_boundary_conditions(self):
-        """Apply all boundary conditions"""
-        
         dx = self.Lx / (self.nx - 1)
         
         # 1. Inlet (Dirichlet): fixed value
@@ -66,8 +62,6 @@ class Scratch:
                 self.phi[i, self.step_x] = self.phi[i, self.step_x + 1]
     
     def solve_laplace_sor(self, max_iter=5000, tol=1e-5, omega=1.8):
-        """Solve Laplace equation using SOR method"""
-        
         dx = self.Lx / (self.nx - 1)
         dy = self.Ly / (self.ny - 1)
         dx2 = dx * dx
@@ -89,29 +83,27 @@ class Scratch:
                     # Skip cells adjacent to inlet (Dirichlet BC)
                     if j == 1:
                         continue
-                    
-                    # FIX 2: Check correct indices for each neighbor!
-                    
+                                
                     # Right neighbor (j+1)
-                    if self.mask[i, j+1]:  # ✓ Correct
+                    if self.mask[i, j+1]:  
                         phi_right = self.phi[i, j+1]
                     else:
                         phi_right = self.phi[i, j]
                     
                     # Left neighbor (j-1)
-                    if self.mask[i, j-1]:  # ✓ Fixed: was j+1
+                    if self.mask[i, j-1]:  
                         phi_left = self.phi[i, j-1]
                     else:
                         phi_left = self.phi[i, j]
                     
                     # Up neighbor (i+1)
-                    if self.mask[i+1, j]:  # ✓ Fixed: was [i, j+1]
+                    if self.mask[i+1, j]: 
                         phi_up = self.phi[i+1, j]
                     else:
                         phi_up = self.phi[i, j]
                     
                     # Down neighbor (i-1)
-                    if self.mask[i-1, j]:  # ✓ Fixed: was [i, j+1]
+                    if self.mask[i-1, j]:  
                         phi_down = self.phi[i-1, j]
                     else:
                         phi_down = self.phi[i, j]
@@ -125,7 +117,6 @@ class Scratch:
                     # SOR update
                     self.phi[i, j] = omega * phi_new + (1 - omega) * self.phi[i, j]
             
-            # FIX 3: Apply BCs INSIDE the loop, after each iteration!
             self.set_boundary_conditions()
             
             # Check convergence
@@ -143,7 +134,6 @@ class Scratch:
         return self.phi
     
     def compute_velocity(self):
-        """Compute velocity field from potential"""
         dx = self.Lx / (self.nx - 1)
         dy = self.Ly / (self.ny - 1)
         
@@ -167,7 +157,6 @@ class Scratch:
         return self.u, self.v
     
     def plot_results(self):
-        """Visualize the solution"""
         u, v = self.compute_velocity()
         velocity_mag = np.sqrt(u**2 + v**2)
         velocity_mag_masked = np.ma.array(velocity_mag, mask=~self.mask)
@@ -216,3 +205,4 @@ if __name__ == "__main__":
     
     print("\n✅ Simulation complete!")
     print(f"Phi range: [{solver.phi.min():.3f}, {solver.phi.max():.3f}]")
+
