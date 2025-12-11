@@ -1,0 +1,255 @@
+program backward_step_ns
+    implicit none
+    
+    ! Grid parameters
+    integer, parameter :: nx = 200, ny = 80
+    integer, parameter :: step_height = 20
+    real(8), parameter :: Lx = 10.0d0, Ly = 2.0d0
+    real(8), parameter :: dx = Lx/dble(nx-1), dy = Ly/dble(ny-1)
+    
+    ! Physical parameters
+    real(8), parameter :: Re = 100.0d0
+    real(8), parameter :: nu = 1.0d0/Re
+    real(8), parameter :: dt = 0.001d0
+    real(8), parameter :: u_inlet = 1.0d0
+    
+    ! Simulation parameters
+    integer, parameter :: nsteps = 10000
+    integer, parameter :: output_freq = 1000
+    
+    ! Field variables
+    real(8), dimension(nx,ny) :: u, v, p, un, vn
+    real(8), dimension(nx,ny) :: b
+    integer, dimension(nx,ny) :: mask
+    
+    ! Loop variables
+    integer :: i, j, n, iter
+    real(8) :: x, y
+    
+    ! Initialize fields
+    u = 0.0d0
+    v = 0.0d0
+    p = 0.0d0
+    mask = 1
+    
+    ! Set up geometry mask (0 = solid, 1 = fluid)
+    do j = 1, ny
+        do i = 1, nx
+            x = dble(i-1)*dx
+            y = dble(j-1)*dy
+            if (i <= 20 .and. j <= step_height) then
+                mask(i,j) = 0
+            end if
+        end do
+    end do
+    
+    print *, "Starting backward-facing step simulation"
+    print *, "Grid: ", nx, " x ", ny
+    print *, "Reynolds number: ", Re
+    print *, "Time step: ", dt
+    print *, "Total steps: ", nsteps
+    
+    ! Main time loop
+    do n = 1, nsteps
+        un = u
+        vn = v
+        
+        ! Build RHS for pressure Poisson equation
+        call build_pressure_rhs(u, v, b, mask, dx, dy, dt, nx, ny)
+        
+        ! Solve pressure Poisson equation
+        call solve_pressure(p, b, mask, dx, dy, nx, ny)
+        
+        ! Update velocity field
+        call update_velocity(u, v, un, vn, p, mask, dx, dy, dt, nu, nx, ny)
+        
+        ! Apply boundary conditions
+        call apply_bc(u, v, p, mask, u_inlet, nx, ny, step_height)
+        
+        if (mod(n, output_freq) == 0) then
+            print *, "Step ", n, " / ", nsteps
+        end if
+    end do
+    
+    ! Save final solution
+    call save_solution(u, v, p, mask, nx, ny, dx, dy)
+    
+    print *, "Simulation complete. Output saved to solution.dat"
+    
+contains
+
+    subroutine build_pressure_rhs(u, v, b, mask, dx, dy, dt, nx, ny)
+        implicit none
+        integer, intent(in) :: nx, ny
+        real(8), intent(in) :: u(nx,ny), v(nx,ny), dx, dy, dt
+        integer, intent(in) :: mask(nx,ny)
+        real(8), intent(out) :: b(nx,ny)
+        integer :: i, j
+        real(8) :: rho
+        
+        rho = 1.0d0
+        b = 0.0d0
+        
+        do j = 2, ny-1
+            do i = 2, nx-1
+                if (mask(i,j) == 1) then
+                    b(i,j) = rho * ((u(i+1,j) - u(i-1,j))/(2.0d0*dx) + &
+                                   (v(i,j+1) - v(i,j-1))/(2.0d0*dy)) / dt
+                end if
+            end do
+        end do
+    end subroutine build_pressure_rhs
+    
+    subroutine solve_pressure(p, b, mask, dx, dy, nx, ny)
+        implicit none
+        integer, intent(in) :: nx, ny
+        real(8), intent(inout) :: p(nx,ny)
+        real(8), intent(in) :: b(nx,ny), dx, dy
+        integer, intent(in) :: mask(nx,ny)
+        integer :: i, j, iter
+        real(8) :: pn(nx,ny), dx2, dy2, coeff
+        
+        dx2 = dx*dx
+        dy2 = dy*dy
+        coeff = 1.0d0/(2.0d0*(dx2 + dy2))
+        
+        ! Jacobi iterations
+        do iter = 1, 50
+            pn = p
+            do j = 2, ny-1
+                do i = 2, nx-1
+                    if (mask(i,j) == 1) then
+                        p(i,j) = coeff * (dy2*(pn(i+1,j) + pn(i-1,j)) + &
+                                         dx2*(pn(i,j+1) + pn(i,j-1)) - &
+                                         dx2*dy2*b(i,j))
+                    end if
+                end do
+            end do
+            
+            ! Pressure boundary conditions
+            do j = 1, ny
+                if (mask(1,j) == 1) p(1,j) = p(2,j)
+                if (mask(nx,j) == 1) p(nx,j) = 0.0d0
+            end do
+            do i = 1, nx
+                if (mask(i,1) == 1) p(i,1) = p(i,2)
+                if (mask(i,ny) == 1) p(i,ny) = p(i,ny-1)
+            end do
+        end do
+    end subroutine solve_pressure
+    
+    subroutine update_velocity(u, v, un, vn, p, mask, dx, dy, dt, nu, nx, ny)
+        implicit none
+        integer, intent(in) :: nx, ny
+        real(8), intent(inout) :: u(nx,ny), v(nx,ny)
+        real(8), intent(in) :: un(nx,ny), vn(nx,ny), p(nx,ny)
+        integer, intent(in) :: mask(nx,ny)
+        real(8), intent(in) :: dx, dy, dt, nu
+        integer :: i, j
+        real(8) :: du_dx, du_dy, dv_dx, dv_dy, d2u_dx2, d2u_dy2, d2v_dx2, d2v_dy2
+        
+        do j = 2, ny-1
+            do i = 2, nx-1
+                if (mask(i,j) == 1) then
+                    ! Convective terms
+                    du_dx = un(i,j)*(un(i+1,j) - un(i-1,j))/(2.0d0*dx)
+                    du_dy = vn(i,j)*(un(i,j+1) - un(i,j-1))/(2.0d0*dy)
+                    
+                    dv_dx = un(i,j)*(vn(i+1,j) - vn(i-1,j))/(2.0d0*dx)
+                    dv_dy = vn(i,j)*(vn(i,j+1) - vn(i,j-1))/(2.0d0*dy)
+                    
+                    ! Diffusive terms
+                    d2u_dx2 = (un(i+1,j) - 2.0d0*un(i,j) + un(i-1,j))/(dx*dx)
+                    d2u_dy2 = (un(i,j+1) - 2.0d0*un(i,j) + un(i,j-1))/(dy*dy)
+                    
+                    d2v_dx2 = (vn(i+1,j) - 2.0d0*vn(i,j) + vn(i-1,j))/(dx*dx)
+                    d2v_dy2 = (vn(i,j+1) - 2.0d0*vn(i,j) + vn(i,j-1))/(dy*dy)
+                    
+                    ! Update velocities
+                    u(i,j) = un(i,j) - dt*(du_dx + du_dy + (p(i+1,j) - p(i-1,j))/(2.0d0*dx)) + &
+                             dt*nu*(d2u_dx2 + d2u_dy2)
+                    
+                    v(i,j) = vn(i,j) - dt*(dv_dx + dv_dy + (p(i,j+1) - p(i,j-1))/(2.0d0*dy)) + &
+                             dt*nu*(d2v_dx2 + d2v_dy2)
+                end if
+            end do
+        end do
+    end subroutine update_velocity
+    
+    subroutine apply_bc(u, v, p, mask, u_inlet, nx, ny, step_height)
+        implicit none
+        integer, intent(in) :: nx, ny, step_height
+        real(8), intent(inout) :: u(nx,ny), v(nx,ny), p(nx,ny)
+        integer, intent(in) :: mask(nx,ny)
+        real(8), intent(in) :: u_inlet
+        integer :: j
+        real(8) :: y, Ly
+        
+        Ly = 2.0d0
+        
+        ! Inlet (parabolic profile)
+        do j = step_height+1, ny
+            if (mask(1,j) == 1) then
+                y = dble(j-step_height-1)/dble(ny-step_height-1)
+                u(1,j) = 4.0d0*u_inlet*y*(1.0d0 - y)
+                v(1,j) = 0.0d0
+            end if
+        end do
+        
+        ! Outlet (zero gradient)
+        do j = 1, ny
+            if (mask(nx,j) == 1) then
+                u(nx,j) = u(nx-1,j)
+                v(nx,j) = v(nx-1,j)
+            end if
+        end do
+        
+        ! Top and bottom walls (no-slip)
+        do j = 1, ny
+            do i = 1, nx
+                if (mask(i,j) == 0) then
+                    u(i,j) = 0.0d0
+                    v(i,j) = 0.0d0
+                end if
+            end do
+        end do
+        
+        ! Top boundary
+        u(:,ny) = 0.0d0
+        v(:,ny) = 0.0d0
+        
+        ! Bottom boundary
+        u(:,1) = 0.0d0
+        v(:,1) = 0.0d0
+        
+        ! Step wall
+        do j = 1, step_height
+            u(20,j) = 0.0d0
+            v(20,j) = 0.0d0
+        end do
+    end subroutine apply_bc
+    
+    subroutine save_solution(u, v, p, mask, nx, ny, dx, dy)
+        implicit none
+        integer, intent(in) :: nx, ny
+        real(8), intent(in) :: u(nx,ny), v(nx,ny), p(nx,ny), dx, dy
+        integer, intent(in) :: mask(nx,ny)
+        integer :: i, j
+        real(8) :: x, y
+        
+        open(unit=10, file='solution.dat', status='replace')
+        write(10,*) '# x y u v p mask'
+        
+        do j = 1, ny
+            do i = 1, nx
+                x = dble(i-1)*dx
+                y = dble(j-1)*dy
+                write(10,'(6E16.8)') x, y, u(i,j), v(i,j), p(i,j), dble(mask(i,j))
+            end do
+            write(10,*)
+        end do
+        
+        close(10)
+    end subroutine save_solution
+
+end program backward_step_ns
